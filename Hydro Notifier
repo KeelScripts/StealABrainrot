@@ -1,13 +1,3 @@
--- https://discord.gg/rNvAU6cjVB 
--- JOIN FOR MORE FREE CRACKED AJS
--- https://discord.gg/rNvAU6cjVB 
--- JOIN FOR BETTER FREE SCRIPTS
--- https://discord.gg/rNvAU6cjVB 
--- JOIN FOR BETTER FREE SOURCES
-
--- Megalodon Finder V1 — Laced UI + our backend
--- GUI style: Laced Notifier  |  Data: Megalodon feed  |  Keys: self-hosted
-
 local HttpService    = game:GetService("HttpService")
 local CoreGui        = game:GetService("CoreGui")
 local TweenService   = game:GetService("TweenService")
