@@ -1,0 +1,1027 @@
+--[[
+    tokinu is so stupid
+    full flash tp (fake visual lagger) gui source
+    original script is detected in like 3 areas, i could remake the script better in under 30 minutes but im too lazy to
+    from discord.gg/rNvAU6cjVB
+]]
+
+local Players        = game:GetService("Players")
+local RunService     = game:GetService("RunService")
+local TweenService   = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Stats          = game:GetService("Stats")
+local LocalPlayer    = Players.LocalPlayer
+local PlayerGui      = LocalPlayer:WaitForChild("PlayerGui")
+
+-- ============================================================
+-- UTILITY: Animated gradient stroke (shared across all panels)
+-- ============================================================
+
+-- Creates a ColorSequence for the animated border gradient
+local function makeBorderGradient()
+    return ColorSequence.new({
+        ColorSequenceKeypoint.new(0,   Color3.fromRGB(0,   0,   0)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(40,  80,  180)),
+        ColorSequenceKeypoint.new(1,   Color3.fromRGB(0,   0,   0)),
+    })
+end
+
+-- Animates a UIGradient's Rotation forever (border shimmer)
+local function animateGradient(gradient, baseRotation, speed)
+    speed = speed or 45
+    task.spawn(function()
+        local t = 0
+        while gradient and gradient.Parent do
+            t = t + RunService.Heartbeat:Wait()
+            gradient.Rotation = baseRotation + math.sin(t * (speed / 50)) * 30
+        end
+    end)
+end
+
+-- Animated title text gradient (blue shimmer wave)
+local function makeTitleGradient()
+    return ColorSequence.new({
+        ColorSequenceKeypoint.new(0,    Color3.fromRGB(60,  100, 200)),
+        ColorSequenceKeypoint.new(0.35, Color3.fromRGB(60,  100, 200)),
+        ColorSequenceKeypoint.new(0.5,  Color3.fromRGB(200, 220, 255)),
+        ColorSequenceKeypoint.new(0.65, Color3.fromRGB(60,  100, 200)),
+        ColorSequenceKeypoint.new(1,    Color3.fromRGB(60,  100, 200)),
+    })
+end
+
+local function animateTitleGradient(gradient)
+    task.spawn(function()
+        local t = 0
+        while gradient and gradient.Parent do
+            t = t + RunService.Heartbeat:Wait()
+            gradient.Offset = Vector2.new(math.sin(t * 0.6) * 0.5, 0)
+        end
+    end)
+end
+
+-- Button press animation (quick scale tween via BackgroundTransparency flicker)
+local function animateButtonPress(button)
+    local originalColor = button.BackgroundColor3
+    button.BackgroundColor3 = Color3.fromRGB(40, 60, 100)
+    task.delay(0.12, function()
+        if button and button.Parent then
+            button.BackgroundColor3 = originalColor
+        end
+    end)
+end
+
+-- Toggle knob slide animation
+local function animateToggle(knob, toggleFrame, state)
+    local onPos  = UDim2.new(1, -14, 0.5, -6)
+    local offPos = UDim2.new(0, 2,   0.5, -6)
+    local onColor  = Color3.fromRGB(100, 150, 255)
+    local offColor = Color3.fromRGB(60,  80,  140)
+    local target = state and onPos or offPos
+    TweenService:Create(knob, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {
+        Position         = target,
+        BackgroundColor3 = state and onColor or offColor,
+    }):Play()
+end
+
+-- Drag any frame by its header (titleLabel or the frame itself)
+local function makeDraggable(frame, dragHandle)
+    dragHandle = dragHandle or frame
+    local dragging, dragStart, startPos
+    dragHandle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging  = true
+            dragStart = input.Position
+            startPos  = frame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (
+            input.UserInputType == Enum.UserInputType.MouseMovement or
+            input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+-- Minimize/restore a frame between full size and header-only height
+local function makeMinimizable(frame, minBtn, fullHeight, headerHeight)
+    headerHeight = headerHeight or 32
+    local minimized = false
+    minBtn.MouseButton1Click:Connect(function()
+        animateButtonPress(minBtn)
+        minimized = not minimized
+        minBtn.Text = minimized and "+" or "-"
+        TweenService:Create(frame, TweenInfo.new(0.22, Enum.EasingStyle.Quad), {
+            Size = UDim2.new(
+                frame.Size.X.Scale, frame.Size.X.Offset,
+                0, minimized and headerHeight or fullHeight
+            )
+        }):Play()
+    end)
+end
+
+-- ============================================================
+-- SECTION 1: TOKINU HUB (Main panel)
+-- ============================================================
+
+local hubGui = Instance.new("ScreenGui")
+hubGui.Name            = "TokinuHub"
+hubGui.ResetOnSpawn    = false
+hubGui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
+hubGui.Parent          = PlayerGui
+
+local hubFrame = Instance.new("Frame")
+hubFrame.Position            = UDim2.new(0, 30, 0, 137)
+hubFrame.Size                = UDim2.new(0, 200, 0, 180)
+hubFrame.BackgroundColor3    = Color3.fromRGB(10, 15, 30)
+hubFrame.BackgroundTransparency = 0.3
+hubFrame.BorderSizePixel     = 0
+hubFrame.ClipsDescendants    = true
+hubFrame.Name                = "Frame"
+hubFrame.Parent              = hubGui
+
+local hubCorner = Instance.new("UICorner")
+hubCorner.CornerRadius = UDim.new(0, 10)
+hubCorner.Parent       = hubFrame
+
+local hubStroke = Instance.new("UIStroke")
+hubStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+hubStroke.Color           = Color3.fromRGB(40, 80, 180)
+hubStroke.Thickness       = 2
+hubStroke.Parent          = hubFrame
+
+local hubStrokeGrad = Instance.new("UIGradient")
+hubStrokeGrad.Color    = makeBorderGradient()
+hubStrokeGrad.Rotation = 203.25
+hubStrokeGrad.Parent   = hubStroke
+animateGradient(hubStrokeGrad, 203.25)
+
+-- Title label
+local hubTitle = Instance.new("TextLabel")
+hubTitle.Text             = "                   Tokinu Hub"
+hubTitle.TextColor3       = Color3.fromRGB(100, 150, 255)
+hubTitle.TextSize         = 12
+hubTitle.FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+hubTitle.TextXAlignment   = Enum.TextXAlignment.Left
+hubTitle.Position         = UDim2.new(0, 8, 0, 4)
+hubTitle.Size             = UDim2.new(1, -40, 0, 14)
+hubTitle.BackgroundTransparency = 1
+hubTitle.Parent           = hubFrame
+
+local hubTitleGrad = Instance.new("UIGradient")
+hubTitleGrad.Color  = makeTitleGradient()
+hubTitleGrad.Offset = Vector2.new(0.996, 0)
+hubTitleGrad.Parent = hubTitle
+animateTitleGradient(hubTitleGrad)
+
+-- Subtitle
+local hubSub = Instance.new("TextLabel")
+hubSub.Text             = "                            Flash TP Lagger"
+hubSub.TextColor3       = Color3.fromRGB(150, 180, 255)
+hubSub.TextTransparency = 0.4
+hubSub.TextSize         = 9
+hubSub.FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+hubSub.TextXAlignment   = Enum.TextXAlignment.Left
+hubSub.Position         = UDim2.new(0, 8, 0, 20)
+hubSub.Size             = UDim2.new(1, -40, 0, 10)
+hubSub.BackgroundTransparency = 1
+hubSub.Parent           = hubFrame
+
+-- Minimize button
+local hubMinBtn = Instance.new("TextButton")
+hubMinBtn.Text            = "-"
+hubMinBtn.TextColor3      = Color3.fromRGB(100, 150, 255)
+hubMinBtn.TextSize        = 14
+hubMinBtn.FontFace        = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+hubMinBtn.Position        = UDim2.new(1, -24, 0, 4)
+hubMinBtn.Size            = UDim2.new(0, 20, 0, 20)
+hubMinBtn.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+hubMinBtn.BorderSizePixel = 0
+hubMinBtn.Parent          = hubFrame
+
+local hubMinCorner = Instance.new("UICorner")
+hubMinCorner.CornerRadius = UDim.new(0, 5)
+hubMinCorner.Parent       = hubMinBtn
+
+local hubMinStroke = Instance.new("UIStroke")
+hubMinStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+hubMinStroke.Color           = Color3.fromRGB(40, 80, 180)
+hubMinStroke.Thickness       = 1.5
+hubMinStroke.Parent          = hubMinBtn
+
+local hubMinStrokeGrad = Instance.new("UIGradient")
+hubMinStrokeGrad.Color    = makeBorderGradient()
+hubMinStrokeGrad.Rotation = 203.25
+hubMinStrokeGrad.Parent   = hubMinStroke
+animateGradient(hubMinStrokeGrad, 203.25)
+
+-- Flash TP toggle row
+local hubFlashRow = Instance.new("Frame")
+hubFlashRow.Position         = UDim2.new(0, 6, 0, 34)
+hubFlashRow.Size             = UDim2.new(1, -12, 0, 26)
+hubFlashRow.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+hubFlashRow.BorderSizePixel  = 0
+hubFlashRow.Parent           = hubFrame
+
+Instance.new("UICorner").Parent = hubFlashRow
+
+local hubFlashStroke = Instance.new("UIStroke")
+hubFlashStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+hubFlashStroke.Color           = Color3.fromRGB(40, 80, 180)
+hubFlashStroke.Thickness       = 1.2
+hubFlashStroke.Parent          = hubFlashRow
+
+local hubFlashStrokeGrad = Instance.new("UIGradient")
+hubFlashStrokeGrad.Color    = makeBorderGradient()
+hubFlashStrokeGrad.Rotation = 203.25
+hubFlashStrokeGrad.Parent   = hubFlashStroke
+animateGradient(hubFlashStrokeGrad, 203.25)
+
+local hubFlashLabel = Instance.new("TextLabel")
+hubFlashLabel.Text           = "Flash TP: ON"
+hubFlashLabel.TextColor3     = Color3.fromRGB(150, 180, 255)
+hubFlashLabel.TextSize       = 10
+hubFlashLabel.FontFace       = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+hubFlashLabel.TextXAlignment = Enum.TextXAlignment.Left
+hubFlashLabel.Position       = UDim2.new(0, 6, 0, 0)
+hubFlashLabel.Size           = UDim2.new(1, -50, 1, 0)
+hubFlashLabel.BackgroundTransparency = 1
+hubFlashLabel.Parent         = hubFlashRow
+
+-- Flash TP toggle switch
+local hubFlashToggleFrame = Instance.new("Frame")
+hubFlashToggleFrame.Position             = UDim2.new(1, -36, 0.5, -8)
+hubFlashToggleFrame.Size                 = UDim2.new(0, 30, 0, 16)
+hubFlashToggleFrame.BackgroundTransparency = 1
+hubFlashToggleFrame.Parent               = hubFlashRow
+
+Instance.new("UICorner").Parent = hubFlashToggleFrame
+
+local hubFlashToggleStroke = Instance.new("UIStroke")
+hubFlashToggleStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+hubFlashToggleStroke.Color           = Color3.fromRGB(40, 80, 180)
+hubFlashToggleStroke.Thickness       = 1.5
+hubFlashToggleStroke.Parent          = hubFlashToggleFrame
+
+local hubFlashToggleStrokeGrad = Instance.new("UIGradient")
+hubFlashToggleStrokeGrad.Color    = makeBorderGradient()
+hubFlashToggleStrokeGrad.Rotation = 203.25
+hubFlashToggleStrokeGrad.Parent   = hubFlashToggleStroke
+animateGradient(hubFlashToggleStrokeGrad, 203.25)
+
+local hubFlashKnob = Instance.new("Frame")
+hubFlashKnob.Position         = UDim2.new(1, -14, 0.5, -6)  -- ON position
+hubFlashKnob.Size             = UDim2.new(0, 12, 0, 12)
+hubFlashKnob.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+hubFlashKnob.Parent           = hubFlashToggleFrame
+
+local hubFlashKnobCorner = Instance.new("UICorner")
+hubFlashKnobCorner.CornerRadius = UDim.new(0, 6)
+hubFlashKnobCorner.Parent       = hubFlashKnob
+
+local hubFlashBtn = Instance.new("TextButton")
+hubFlashBtn.Text              = ""
+hubFlashBtn.Size              = UDim2.new(1, 0, 1, 0)
+hubFlashBtn.BackgroundTransparency = 1
+hubFlashBtn.Parent            = hubFlashRow
+
+-- Trigger % slider row
+local hubTriggerRow = Instance.new("Frame")
+hubTriggerRow.Position         = UDim2.new(0, 6, 0, 66)
+hubTriggerRow.Size             = UDim2.new(1, -12, 0, 34)
+hubTriggerRow.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+hubTriggerRow.BorderSizePixel  = 0
+hubTriggerRow.Parent           = hubFrame
+
+Instance.new("UICorner").Parent = hubTriggerRow
+
+local hubTriggerStroke = Instance.new("UIStroke")
+hubTriggerStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+hubTriggerStroke.Color           = Color3.fromRGB(40, 80, 180)
+hubTriggerStroke.Thickness       = 1.2
+hubTriggerStroke.Parent          = hubTriggerRow
+
+local hubTriggerStrokeGrad = Instance.new("UIGradient")
+hubTriggerStrokeGrad.Color    = makeBorderGradient()
+hubTriggerStrokeGrad.Rotation = 203.25
+hubTriggerStrokeGrad.Parent   = hubTriggerStroke
+animateGradient(hubTriggerStrokeGrad, 203.25)
+
+local hubTriggerLabel = Instance.new("TextLabel")
+hubTriggerLabel.Text           = "Trigger %"
+hubTriggerLabel.TextColor3     = Color3.fromRGB(150, 180, 255)
+hubTriggerLabel.TextSize       = 10
+hubTriggerLabel.FontFace       = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+hubTriggerLabel.TextXAlignment = Enum.TextXAlignment.Left
+hubTriggerLabel.Position       = UDim2.new(0, 6, 0, 2)
+hubTriggerLabel.Size           = UDim2.new(0, 55, 0, 14)
+hubTriggerLabel.BackgroundTransparency = 1
+hubTriggerLabel.Parent         = hubTriggerRow
+
+local hubTriggerPct = Instance.new("TextLabel")
+hubTriggerPct.Text           = "92%"
+hubTriggerPct.TextColor3     = Color3.fromRGB(100, 150, 255)
+hubTriggerPct.TextSize       = 10
+hubTriggerPct.FontFace       = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+hubTriggerPct.TextXAlignment = Enum.TextXAlignment.Right
+hubTriggerPct.Position       = UDim2.new(1, -38, 0, 2)
+hubTriggerPct.Size           = UDim2.new(0, 34, 0, 14)
+hubTriggerPct.BackgroundTransparency = 1
+hubTriggerPct.Parent         = hubTriggerRow
+
+-- Slider track
+local hubSliderTrack = Instance.new("Frame")
+hubSliderTrack.Position         = UDim2.new(0, 6, 0, 22)
+hubSliderTrack.Size             = UDim2.new(1, -12, 0, 8)
+hubSliderTrack.BackgroundColor3 = Color3.fromRGB(40, 50, 70)
+hubSliderTrack.BorderSizePixel  = 0
+hubSliderTrack.Parent           = hubTriggerRow
+
+local hubSliderTrackCorner = Instance.new("UICorner")
+hubSliderTrackCorner.CornerRadius = UDim.new(0, 4)
+hubSliderTrackCorner.Parent       = hubSliderTrack
+
+local hubSliderFill = Instance.new("Frame")
+hubSliderFill.Size             = UDim2.new(0.92, 0, 1, 0)
+hubSliderFill.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+hubSliderFill.BorderSizePixel  = 0
+hubSliderFill.Parent           = hubSliderTrack
+
+local hubSliderFillCorner = Instance.new("UICorner")
+hubSliderFillCorner.CornerRadius = UDim.new(0, 4)
+hubSliderFillCorner.Parent       = hubSliderFill
+
+local hubSliderHandle = Instance.new("Frame")
+hubSliderHandle.Position         = UDim2.new(0.92, 0, 0.5, 0)
+hubSliderHandle.Size             = UDim2.new(0, 12, 0, 12)
+hubSliderHandle.AnchorPoint      = Vector2.new(0.5, 0.5)
+hubSliderHandle.BackgroundColor3 = Color3.fromRGB(20, 50, 160)
+hubSliderHandle.BorderSizePixel  = 0
+hubSliderHandle.Parent           = hubSliderTrack
+
+local hubSliderHandleCorner = Instance.new("UICorner")
+hubSliderHandleCorner.CornerRadius = UDim.new(1, 0)
+hubSliderHandleCorner.Parent       = hubSliderHandle
+
+-- Start/End input row
+local hubInputRow = Instance.new("Frame")
+hubInputRow.Position         = UDim2.new(0, 6, 0, 106)
+hubInputRow.Size             = UDim2.new(1, -12, 0, 38)
+hubInputRow.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+hubInputRow.BorderSizePixel  = 0
+hubInputRow.Parent           = hubFrame
+
+Instance.new("UICorner").Parent = hubInputRow
+
+local hubInputStroke = Instance.new("UIStroke")
+hubInputStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+hubInputStroke.Color           = Color3.fromRGB(40, 80, 180)
+hubInputStroke.Thickness       = 1.2
+hubInputStroke.Parent          = hubInputRow
+
+local hubInputStrokeGrad = Instance.new("UIGradient")
+hubInputStrokeGrad.Color    = makeBorderGradient()
+hubInputStrokeGrad.Rotation = 203.25
+hubInputStrokeGrad.Parent   = hubInputStroke
+animateGradient(hubInputStrokeGrad, 203.25)
+
+local hubStartLabel = Instance.new("TextLabel")
+hubStartLabel.Text           = "Start:"
+hubStartLabel.TextColor3     = Color3.fromRGB(150, 180, 255)
+hubStartLabel.TextSize       = 9
+hubStartLabel.FontFace       = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+hubStartLabel.TextXAlignment = Enum.TextXAlignment.Left
+hubStartLabel.Position       = UDim2.new(0, 6, 0, 12)
+hubStartLabel.Size           = UDim2.new(0, 42, 0, 14)
+hubStartLabel.BackgroundTransparency = 1
+hubStartLabel.Parent         = hubInputRow
+
+local hubStartBox = Instance.new("TextBox")
+hubStartBox.Text             = "0.5"
+hubStartBox.TextColor3       = Color3.fromRGB(100, 150, 255)
+hubStartBox.TextSize         = 10
+hubStartBox.FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+hubStartBox.Position         = UDim2.new(0, 46, 0, 9)
+hubStartBox.Size             = UDim2.new(0, 40, 0, 20)
+hubStartBox.BackgroundColor3 = Color3.fromRGB(15, 20, 40)
+hubStartBox.BorderSizePixel  = 0
+hubStartBox.Parent           = hubInputRow
+
+local hubStartBoxCorner = Instance.new("UICorner")
+hubStartBoxCorner.CornerRadius = UDim.new(0, 4)
+hubStartBoxCorner.Parent       = hubStartBox
+
+local hubStartBoxStroke = Instance.new("UIStroke")
+hubStartBoxStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+hubStartBoxStroke.Color           = Color3.fromRGB(40, 80, 180)
+hubStartBoxStroke.Parent          = hubStartBox
+
+local hubStartBoxGrad = Instance.new("UIGradient")
+hubStartBoxGrad.Color    = makeBorderGradient()
+hubStartBoxGrad.Rotation = 203.25
+hubStartBoxGrad.Parent   = hubStartBoxStroke
+animateGradient(hubStartBoxGrad, 203.25)
+
+local hubEndLabel = Instance.new("TextLabel")
+hubEndLabel.Text           = "End:"
+hubEndLabel.TextColor3     = Color3.fromRGB(150, 180, 255)
+hubEndLabel.TextSize       = 9
+hubEndLabel.FontFace       = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+hubEndLabel.TextXAlignment = Enum.TextXAlignment.Left
+hubEndLabel.Position       = UDim2.new(0, 94, 0, 12)
+hubEndLabel.Size           = UDim2.new(0, 38, 0, 14)
+hubEndLabel.BackgroundTransparency = 1
+hubEndLabel.Parent         = hubInputRow
+
+local hubEndBox = Instance.new("TextBox")
+hubEndBox.Text             = "0.5"
+hubEndBox.TextColor3       = Color3.fromRGB(100, 150, 255)
+hubEndBox.TextSize         = 10
+hubEndBox.FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+hubEndBox.Position         = UDim2.new(0, 126, 0, 9)
+hubEndBox.Size             = UDim2.new(0, 40, 0, 20)
+hubEndBox.BackgroundColor3 = Color3.fromRGB(15, 20, 40)
+hubEndBox.BorderSizePixel  = 0
+hubEndBox.Parent           = hubInputRow
+
+local hubEndBoxCorner = Instance.new("UICorner")
+hubEndBoxCorner.CornerRadius = UDim.new(0, 4)
+hubEndBoxCorner.Parent       = hubEndBox
+
+local hubEndBoxStroke = Instance.new("UIStroke")
+hubEndBoxStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+hubEndBoxStroke.Color           = Color3.fromRGB(40, 80, 180)
+hubEndBoxStroke.Parent          = hubEndBox
+
+local hubEndBoxGrad = Instance.new("UIGradient")
+hubEndBoxGrad.Color    = makeBorderGradient()
+hubEndBoxGrad.Rotation = 203.5
+hubEndBoxGrad.Parent   = hubEndBoxStroke
+animateGradient(hubEndBoxGrad, 203.5)
+
+-- Footer watermark
+local hubWatermark = Instance.new("TextLabel")
+hubWatermark.Text             = "discord.gg/tokinu"
+hubWatermark.TextColor3       = Color3.fromRGB(80, 110, 180)
+hubWatermark.TextTransparency = 0.4
+hubWatermark.TextSize         = 9
+hubWatermark.FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+hubWatermark.Position         = UDim2.new(0, 6, 1, -16)
+hubWatermark.Size             = UDim2.new(1, -12, 0, 14)
+hubWatermark.BackgroundTransparency = 1
+hubWatermark.Parent           = hubFrame
+
+-- Hub: Flash TP toggle logic
+local hubFlashState = true  -- starts ON (knob on right)
+hubFlashBtn.MouseButton1Click:Connect(function()
+    hubFlashState = not hubFlashState
+    hubFlashLabel.Text = hubFlashState and "Flash TP: ON" or "Flash TP: OFF"
+    animateToggle(hubFlashKnob, hubFlashToggleFrame, hubFlashState)
+end)
+
+-- Hub: Trigger % slider drag logic
+local hubSliderDragging = false
+local hubSliderValue = 0.92
+
+local function updateHubSlider(val)
+    val = math.clamp(val, 0, 1)
+    hubSliderValue = val
+    hubSliderFill.Size     = UDim2.new(val, 0, 1, 0)
+    hubSliderHandle.Position = UDim2.new(val, 0, 0.5, 0)
+    hubTriggerPct.Text     = math.floor(val * 100) .. "%"
+end
+
+hubSliderTrack.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        hubSliderDragging = true
+        local relX = (input.Position.X - hubSliderTrack.AbsolutePosition.X) / hubSliderTrack.AbsoluteSize.X
+        updateHubSlider(relX)
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if hubSliderDragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement or
+        input.UserInputType == Enum.UserInputType.Touch) then
+        local relX = (input.Position.X - hubSliderTrack.AbsolutePosition.X) / hubSliderTrack.AbsoluteSize.X
+        updateHubSlider(relX)
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        hubSliderDragging = false
+    end
+end)
+
+-- Hub: dragging and minimize
+makeDraggable(hubFrame, hubTitle)
+makeMinimizable(hubFrame, hubMinBtn, 180, 32)
+
+-- ============================================================
+-- SECTION 2: TOKINUBOOSTER (Speed & Float panel)
+-- ============================================================
+
+local boosterGui = Instance.new("ScreenGui")
+boosterGui.Name           = "tokinubooster"
+boosterGui.ResetOnSpawn   = false
+boosterGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+boosterGui.Parent         = PlayerGui
+
+local boosterFrame = Instance.new("Frame")
+boosterFrame.Position            = UDim2.new(1, -205, 0.3, 0)
+boosterFrame.Size                = UDim2.new(0, 195, 0, 155)
+boosterFrame.BackgroundColor3    = Color3.fromRGB(10, 15, 30)
+boosterFrame.BackgroundTransparency = 0.3
+boosterFrame.BorderSizePixel     = 0
+boosterFrame.Name                = "Frame"
+boosterFrame.Parent              = boosterGui
+
+local boosterCorner = Instance.new("UICorner")
+boosterCorner.CornerRadius = UDim.new(0, 10)
+boosterCorner.Parent       = boosterFrame
+
+local boosterStroke = Instance.new("UIStroke")
+boosterStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+boosterStroke.Color           = Color3.fromRGB(40, 80, 180)
+boosterStroke.Thickness       = 2
+boosterStroke.Parent          = boosterFrame
+
+local boosterStrokeGrad = Instance.new("UIGradient")
+boosterStrokeGrad.Color    = makeBorderGradient()
+boosterStrokeGrad.Rotation = 215
+boosterStrokeGrad.Parent   = boosterStroke
+animateGradient(boosterStrokeGrad, 215)
+
+-- Title
+local boosterTitle = Instance.new("TextLabel")
+boosterTitle.Text           = "                  Speed & Float"
+boosterTitle.TextColor3     = Color3.fromRGB(100, 150, 255)
+boosterTitle.TextSize       = 11
+boosterTitle.FontFace       = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+boosterTitle.TextXAlignment = Enum.TextXAlignment.Left
+boosterTitle.Position       = UDim2.new(0, 8, 0, 4)
+boosterTitle.Size           = UDim2.new(1, -10, 0, 14)
+boosterTitle.BackgroundTransparency = 1
+boosterTitle.Parent         = boosterFrame
+
+local boosterTitleGrad = Instance.new("UIGradient")
+boosterTitleGrad.Color  = makeTitleGradient()
+boosterTitleGrad.Offset = Vector2.new(0.62, 0)
+boosterTitleGrad.Parent = boosterTitle
+animateTitleGradient(boosterTitleGrad)
+
+-- Speed input row
+local boosterSpeedRow = Instance.new("Frame")
+boosterSpeedRow.Position         = UDim2.new(0, 8, 0, 24)
+boosterSpeedRow.Size             = UDim2.new(1, -16, 0, 28)
+boosterSpeedRow.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+boosterSpeedRow.BorderSizePixel  = 0
+boosterSpeedRow.Parent           = boosterFrame
+
+Instance.new("UICorner").Parent = boosterSpeedRow
+
+local boosterSpeedStroke = Instance.new("UIStroke")
+boosterSpeedStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+boosterSpeedStroke.Color           = Color3.fromRGB(40, 80, 180)
+boosterSpeedStroke.Thickness       = 1.2
+boosterSpeedStroke.Parent          = boosterSpeedRow
+
+local boosterSpeedStrokeGrad = Instance.new("UIGradient")
+boosterSpeedStrokeGrad.Color    = makeBorderGradient()
+boosterSpeedStrokeGrad.Rotation = 215
+boosterSpeedStrokeGrad.Parent   = boosterSpeedStroke
+animateGradient(boosterSpeedStrokeGrad, 215)
+
+local boosterSpeedLabel = Instance.new("TextLabel")
+boosterSpeedLabel.Text           = "Speed:"
+boosterSpeedLabel.TextColor3     = Color3.fromRGB(150, 180, 255)
+boosterSpeedLabel.TextSize       = 10
+boosterSpeedLabel.FontFace       = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+boosterSpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
+boosterSpeedLabel.Position       = UDim2.new(0, 6, 0, 0)
+boosterSpeedLabel.Size           = UDim2.new(0, 45, 1, 0)
+boosterSpeedLabel.BackgroundTransparency = 1
+boosterSpeedLabel.Parent         = boosterSpeedRow
+
+local boosterSpeedBox = Instance.new("TextBox")
+boosterSpeedBox.Text             = "27"
+boosterSpeedBox.TextColor3       = Color3.fromRGB(100, 150, 255)
+boosterSpeedBox.TextSize         = 11
+boosterSpeedBox.FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+boosterSpeedBox.Position         = UDim2.new(1, -75, 0.5, -11)
+boosterSpeedBox.Size             = UDim2.new(0, 65, 0, 22)
+boosterSpeedBox.BackgroundColor3 = Color3.fromRGB(15, 20, 40)
+boosterSpeedBox.BorderSizePixel  = 0
+boosterSpeedBox.Parent           = boosterSpeedRow
+
+local boosterSpeedBoxCorner = Instance.new("UICorner")
+boosterSpeedBoxCorner.CornerRadius = UDim.new(0, 4)
+boosterSpeedBoxCorner.Parent       = boosterSpeedBox
+
+local boosterSpeedBoxStroke = Instance.new("UIStroke")
+boosterSpeedBoxStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+boosterSpeedBoxStroke.Color           = Color3.fromRGB(40, 80, 180)
+boosterSpeedBoxStroke.Parent          = boosterSpeedBox
+
+local boosterSpeedBoxGrad = Instance.new("UIGradient")
+boosterSpeedBoxGrad.Color    = makeBorderGradient()
+boosterSpeedBoxGrad.Rotation = 215
+boosterSpeedBoxGrad.Parent   = boosterSpeedBoxStroke
+animateGradient(boosterSpeedBoxGrad, 215)
+
+-- Helper: build a toggle row for booster
+local function makeBoosterToggleRow(parent, yPos, labelText)
+    local row = Instance.new("Frame")
+    row.Position         = UDim2.new(0, 8, 0, yPos)
+    row.Size             = UDim2.new(1, -16, 0, 28)
+    row.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+    row.BorderSizePixel  = 0
+    row.Parent           = parent
+
+    Instance.new("UICorner").Parent = row
+
+    local rowStroke = Instance.new("UIStroke")
+    rowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    rowStroke.Color           = Color3.fromRGB(40, 80, 180)
+    rowStroke.Thickness       = 1.2
+    rowStroke.Parent          = row
+
+    local rowStrokeGrad = Instance.new("UIGradient")
+    rowStrokeGrad.Color    = makeBorderGradient()
+    rowStrokeGrad.Rotation = 215
+    rowStrokeGrad.Parent   = rowStroke
+    animateGradient(rowStrokeGrad, 215)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Text           = labelText .. ": OFF"
+    lbl.TextColor3     = Color3.fromRGB(150, 180, 255)
+    lbl.TextSize       = 10
+    lbl.FontFace       = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Position       = UDim2.new(0, 6, 0, 0)
+    lbl.Size           = UDim2.new(1, -50, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Parent         = row
+
+    local toggleOuter = Instance.new("Frame")
+    toggleOuter.Position             = UDim2.new(1, -36, 0.5, -8)
+    toggleOuter.Size                 = UDim2.new(0, 30, 0, 16)
+    toggleOuter.BackgroundTransparency = 1
+    toggleOuter.Parent               = row
+
+    Instance.new("UICorner").Parent = toggleOuter
+
+    local outerStroke = Instance.new("UIStroke")
+    outerStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    outerStroke.Color           = Color3.fromRGB(40, 80, 180)
+    outerStroke.Thickness       = 1.5
+    outerStroke.Parent          = toggleOuter
+
+    local outerStrokeGrad = Instance.new("UIGradient")
+    outerStrokeGrad.Color    = makeBorderGradient()
+    outerStrokeGrad.Rotation = 258
+    outerStrokeGrad.Parent   = outerStroke
+    animateGradient(outerStrokeGrad, 258)
+
+    local knob = Instance.new("Frame")
+    knob.Position         = UDim2.new(0, 2, 0.5, -6)  -- OFF position
+    knob.Size             = UDim2.new(0, 12, 0, 12)
+    knob.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+    knob.Parent           = toggleOuter
+
+    local knobCorner = Instance.new("UICorner")
+    knobCorner.CornerRadius = UDim.new(0, 6)
+    knobCorner.Parent       = knob
+
+    local btn = Instance.new("TextButton")
+    btn.Text              = ""
+    btn.Size              = UDim2.new(1, 0, 1, 0)
+    btn.BackgroundTransparency = 1
+    btn.Parent            = row
+
+    -- Wire toggle
+    local state = false
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        lbl.Text = labelText .. (state and ": ON" or ": OFF")
+        animateToggle(knob, toggleOuter, state)
+    end)
+
+    return row
+end
+
+makeBoosterToggleRow(boosterFrame, 56, "Speed")
+makeBoosterToggleRow(boosterFrame, 88, "Float")
+makeBoosterToggleRow(boosterFrame, 120, "Auto Giant Potion")
+
+-- Booster: draggable by title
+makeDraggable(boosterFrame, boosterTitle)
+
+-- ============================================================
+-- SECTION 3: TOKINALIGN (Align panel)
+-- ============================================================
+
+local alignGui = Instance.new("ScreenGui")
+alignGui.Name           = "tokinalign"
+alignGui.ResetOnSpawn   = false
+alignGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+alignGui.Parent         = PlayerGui
+
+local alignFrame = Instance.new("Frame")
+alignFrame.Position            = UDim2.new(1, -205, 0.3, 165)
+alignFrame.Size                = UDim2.new(0, 195, 0, 42)
+alignFrame.BackgroundColor3    = Color3.fromRGB(10, 15, 30)
+alignFrame.BackgroundTransparency = 0.3
+alignFrame.BorderSizePixel     = 0
+alignFrame.Name                = "Frame"
+alignFrame.Parent              = alignGui
+
+local alignCorner = Instance.new("UICorner")
+alignCorner.CornerRadius = UDim.new(0, 10)
+alignCorner.Parent       = alignFrame
+
+local alignStroke = Instance.new("UIStroke")
+alignStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+alignStroke.Color           = Color3.fromRGB(40, 80, 180)
+alignStroke.Thickness       = 2
+alignStroke.Parent          = alignFrame
+
+local alignStrokeGrad = Instance.new("UIGradient")
+alignStrokeGrad.Color    = makeBorderGradient()
+alignStrokeGrad.Rotation = 278.25
+alignStrokeGrad.Parent   = alignStroke
+animateGradient(alignStrokeGrad, 278.25)
+
+-- ALIGN button
+local alignBtn = Instance.new("TextButton")
+alignBtn.Text             = "ALIGN"
+alignBtn.TextColor3       = Color3.fromRGB(100, 150, 255)
+alignBtn.TextSize         = 11
+alignBtn.FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+alignBtn.Position         = UDim2.new(0, 8, 0.5, -13)
+alignBtn.Size             = UDim2.new(0, 70, 0, 26)
+alignBtn.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+alignBtn.BorderSizePixel  = 0
+alignBtn.Parent           = alignFrame
+
+local alignBtnCorner = Instance.new("UICorner")
+alignBtnCorner.CornerRadius = UDim.new(0, 6)
+alignBtnCorner.Parent       = alignBtn
+
+local alignBtnStroke = Instance.new("UIStroke")
+alignBtnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+alignBtnStroke.Color           = Color3.fromRGB(40, 80, 180)
+alignBtnStroke.Thickness       = 1.2
+alignBtnStroke.Parent          = alignBtn
+
+local alignBtnStrokeGrad = Instance.new("UIGradient")
+alignBtnStrokeGrad.Color    = makeBorderGradient()
+alignBtnStrokeGrad.Rotation = 278.25
+alignBtnStrokeGrad.Parent   = alignBtnStroke
+animateGradient(alignBtnStrokeGrad, 278.25)
+
+-- [V] toggle button
+local alignVBtn = Instance.new("TextButton")
+alignVBtn.Text             = "[V]"
+alignVBtn.TextColor3       = Color3.fromRGB(100, 150, 255)
+alignVBtn.TextSize         = 10
+alignVBtn.FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+alignVBtn.Position         = UDim2.new(1, -73, 0.5, -13)
+alignVBtn.Size             = UDim2.new(0, 65, 0, 26)
+alignVBtn.BackgroundColor3 = Color3.fromRGB(15, 20, 40)
+alignVBtn.BorderSizePixel  = 0
+alignVBtn.Parent           = alignFrame
+
+local alignVBtnCorner = Instance.new("UICorner")
+alignVBtnCorner.CornerRadius = UDim.new(0, 6)
+alignVBtnCorner.Parent       = alignVBtn
+
+local alignVBtnStroke = Instance.new("UIStroke")
+alignVBtnStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+alignVBtnStroke.Color           = Color3.fromRGB(40, 80, 180)
+alignVBtnStroke.Parent          = alignVBtn
+
+local alignVBtnStrokeGrad = Instance.new("UIGradient")
+alignVBtnStrokeGrad.Color    = makeBorderGradient()
+alignVBtnStrokeGrad.Rotation = 278.25
+alignVBtnStrokeGrad.Parent   = alignVBtnStroke
+animateGradient(alignVBtnStrokeGrad, 278.25)
+
+-- Align button logic
+local alignActive = false
+alignBtn.MouseButton1Click:Connect(function()
+    alignActive = not alignActive
+    animateButtonPress(alignBtn)
+    alignBtn.Text      = alignActive and "ALIGNED" or "ALIGN"
+    alignBtn.TextColor3 = alignActive and Color3.fromRGB(100, 255, 150) or Color3.fromRGB(100, 150, 255)
+end)
+
+local alignVState = false
+alignVBtn.MouseButton1Click:Connect(function()
+    alignVState = not alignVState
+    animateButtonPress(alignVBtn)
+    alignVBtn.Text      = alignVState and "[^]" or "[V]"
+    alignVBtn.TextColor3 = alignVState and Color3.fromRGB(100, 255, 150) or Color3.fromRGB(100, 150, 255)
+end)
+
+makeDraggable(alignFrame)
+
+-- ============================================================
+-- SECTION 4: TOKINUHELPER (Helper panel)
+-- ============================================================
+
+local helperGui = Instance.new("ScreenGui")
+helperGui.Name           = "tokinuhelper"
+helperGui.ResetOnSpawn   = false
+helperGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+helperGui.Parent         = PlayerGui
+
+local helperFrame = Instance.new("Frame")
+helperFrame.Position            = UDim2.new(0, 10, 0.5, -50)
+helperFrame.Size                = UDim2.new(0, 145, 0, 100)
+helperFrame.BackgroundColor3    = Color3.fromRGB(10, 15, 30)
+helperFrame.BackgroundTransparency = 0.3
+helperFrame.BorderSizePixel     = 0
+helperFrame.Name                = "Frame"
+helperFrame.Parent              = helperGui
+
+local helperCorner = Instance.new("UICorner")
+helperCorner.CornerRadius = UDim.new(0, 10)
+helperCorner.Parent       = helperFrame
+
+local helperStroke = Instance.new("UIStroke")
+helperStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+helperStroke.Color           = Color3.fromRGB(40, 80, 180)
+helperStroke.Thickness       = 2
+helperStroke.Parent          = helperFrame
+
+local helperStrokeGrad = Instance.new("UIGradient")
+helperStrokeGrad.Color    = makeBorderGradient()
+helperStrokeGrad.Rotation = 230.75
+helperStrokeGrad.Parent   = helperStroke
+animateGradient(helperStrokeGrad, 230.75)
+
+-- Title label
+local helperTitle = Instance.new("TextLabel")
+helperTitle.Text           = "                HELPER"
+helperTitle.TextColor3     = Color3.fromRGB(100, 150, 255)
+helperTitle.TextSize       = 11
+helperTitle.FontFace       = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+helperTitle.TextXAlignment = Enum.TextXAlignment.Left
+helperTitle.Position       = UDim2.new(0, 5, 0, 4)
+helperTitle.Size           = UDim2.new(1, -10, 0, 18)
+helperTitle.BackgroundTransparency = 1
+helperTitle.Parent         = helperFrame
+
+-- Helper: build a standard action button
+local function makeHelperButton(parent, yPos, labelText)
+    local btn = Instance.new("TextButton")
+    btn.Text             = labelText
+    btn.TextColor3       = Color3.fromRGB(150, 180, 255)
+    btn.TextSize         = 10
+    btn.FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+    btn.Position         = UDim2.new(0.5, -62, 0, yPos)
+    btn.Size             = UDim2.new(0, 125, 0, 20)
+    btn.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+    btn.BorderSizePixel  = 0
+    btn.Parent           = parent
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent       = btn
+
+    local stroke = Instance.new("UIStroke")
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Color           = Color3.fromRGB(40, 80, 180)
+    stroke.Thickness       = 1.5
+    stroke.Parent          = btn
+
+    local grad = Instance.new("UIGradient")
+    grad.Color    = makeBorderGradient()
+    grad.Rotation = 230.75
+    grad.Parent   = stroke
+    animateGradient(grad, 230.75)
+
+    btn.MouseButton1Click:Connect(function()
+        animateButtonPress(btn)
+    end)
+
+    return btn
+end
+
+local rejoinBtn      = makeHelperButton(helperFrame, 24, "REJOIN")
+local resetBtn       = makeHelperButton(helperFrame, 48, "INSTANT RESET")
+local kickSelfBtn    = makeHelperButton(helperFrame, 72, "KICK SELF")
+
+-- Wire up actual logic
+rejoinBtn.MouseButton1Click:Connect(function()
+    local teleportService = game:GetService("TeleportService")
+    teleportService:Teleport(game.PlaceId, LocalPlayer)
+end)
+
+resetBtn.MouseButton1Click:Connect(function()
+    local character = LocalPlayer.Character
+    if character then
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.Health = 0
+        end
+    end
+end)
+
+kickSelfBtn.MouseButton1Click:Connect(function()
+    LocalPlayer:Kick("Kicked self via Tokinu Helper")
+end)
+
+makeDraggable(helperFrame, helperTitle)
+
+-- ============================================================
+-- SECTION 5: TOKINUSTATS (Stats / FPS / Ping bar)
+-- ============================================================
+
+local statsGui = Instance.new("ScreenGui")
+statsGui.Name           = "tokinustats"
+statsGui.ResetOnSpawn   = false
+statsGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+statsGui.Parent         = PlayerGui
+
+local statsFrame = Instance.new("Frame")
+statsFrame.Position            = UDim2.new(0.5, -105, 1, -120)
+statsFrame.Size                = UDim2.new(0, 210, 0, 40)
+statsFrame.BackgroundColor3    = Color3.fromRGB(10, 15, 30)
+statsFrame.BackgroundTransparency = 0.3
+statsFrame.BorderSizePixel     = 0
+statsFrame.Name                = "Frame"
+statsFrame.Parent              = statsGui
+
+Instance.new("UICorner").Parent = statsFrame
+
+local statsStroke = Instance.new("UIStroke")
+statsStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+statsStroke.Color           = Color3.fromRGB(40, 80, 180)
+statsStroke.Thickness       = 1.5
+statsStroke.Parent          = statsFrame
+
+local statsStrokeGrad = Instance.new("UIGradient")
+statsStrokeGrad.Color    = makeBorderGradient()
+statsStrokeGrad.Rotation = 223.25
+statsStrokeGrad.Parent   = statsStroke
+animateGradient(statsStrokeGrad, 223.25)
+
+-- Discord label with animated gradient
+local statsDiscord = Instance.new("TextLabel")
+statsDiscord.Text           = "discord.gg/tokinu"
+statsDiscord.TextColor3     = Color3.fromRGB(100, 150, 255)
+statsDiscord.TextSize       = 12
+statsDiscord.FontFace       = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+statsDiscord.Position       = UDim2.new(0, 8, 0, 3)
+statsDiscord.Size           = UDim2.new(1, -16, 0.55, 0)
+statsDiscord.BackgroundTransparency = 1
+statsDiscord.Parent         = statsFrame
+
+local statsDiscordGrad = Instance.new("UIGradient")
+statsDiscordGrad.Color  = makeTitleGradient()
+statsDiscordGrad.Offset = Vector2.new(0.356, 0)
+statsDiscordGrad.Parent = statsDiscord
+animateTitleGradient(statsDiscordGrad)
+
+-- FPS / Ping label (live updating)
+local statsFpsLabel = Instance.new("TextLabel")
+statsFpsLabel.Text           = "FPS: 60 | PING: 42 ms"
+statsFpsLabel.TextColor3     = Color3.fromRGB(150, 180, 255)
+statsFpsLabel.TextSize       = 10
+statsFpsLabel.FontFace       = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+statsFpsLabel.Position       = UDim2.new(0, 8, 0.6, 0)
+statsFpsLabel.Size           = UDim2.new(1, -16, 0, 13)
+statsFpsLabel.BackgroundTransparency = 1
+statsFpsLabel.Parent         = statsFrame
+
+-- Live FPS + Ping updater
+local fpsSamples = {}
+local fpsUpdateConn = RunService.Heartbeat:Connect(function(dt)
+    table.insert(fpsSamples, 1 / dt)
+    if #fpsSamples > 20 then table.remove(fpsSamples, 1) end
+    local sum = 0
+    for _, v in ipairs(fpsSamples) do sum = sum + v end
+    local fps  = math.floor(sum / #fpsSamples)
+    local ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+    statsFpsLabel.Text = "FPS: " .. fps .. " | PING: " .. ping .. " ms"
+end)
+
+makeDraggable(statsFrame)
+
+-- ============================================================
+-- END OF TOKINU HUB COMBINED SCRIPT
+-- ============================================================
